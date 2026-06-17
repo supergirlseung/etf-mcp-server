@@ -8,6 +8,7 @@ load_dotenv()
 NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+KRX_API_KEY = os.getenv("KRX_API_KEY")
 
 mcp = FastMCP("ETF Marketing Intelligence Server")
 
@@ -245,6 +246,110 @@ def get_analysis_guideline(topic: str = "general") -> dict:
 
     return guidelines.get(topic, guidelines["general"])
 
+
+# ─────────────────────────────────────────────
+# 도구 5: KRX ETF 일별 시세 조회
+# ─────────────────────────────────────────────
+@mcp.tool()
+async def get_krx_etf_price(
+    etf_code: str,
+    date: str = None
+) -> dict:
+    """
+    KRX 정보데이터시스템 API로 ETF 일별 시세를 조회합니다.
+    etf_code: ETF 종목코드 6자리 (예: "069500" = KODEX 200)
+    date: 조회일자 (형식: "20240601", 미입력 시 가장 최근 영업일)
+    """
+    import datetime
+
+    if not date:
+        today = datetime.date.today()
+        date = today.strftime("%Y%m%d")
+
+    headers = {"AUTH_KEY": KRX_API_KEY}
+    params = {"basDd": date}
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            "http://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd",
+            headers=headers,
+            params=params
+        )
+        data = response.json()
+
+    # 전체 ETF 중 해당 종목코드만 필터링
+    items = data.get("OutBlock_1", [])
+    result = [item for item in items if item.get("ISU_CD", "").startswith(etf_code)]
+
+    if not result:
+        return {
+            "message": f"종목코드 {etf_code}의 데이터를 찾을 수 없습니다. 날짜({date})가 영업일인지 확인해 주세요.",
+            "ANALYSIS_GUIDE": "KRX 데이터는 전일 기준이며 익일 오전 8시에 업데이트됩니다. 당일 실시간 데이터는 제공되지 않습니다."
+        }
+
+    return {
+        "etf_code": etf_code,
+        "date": date,
+        "data": result,
+        "ANALYSIS_GUIDE": (
+            "⚠️ KRX 데이터는 전일 기준입니다. 당일 실시간 시세가 아닙니다. "
+            "종가(TDD_CLSPRC), 거래량(ACC_TRDVOL), 거래대금(ACC_TRDVAL), "
+            "순자산(NETASST_TOTAMT) 등을 확인할 수 있습니다. "
+            "순매수는 투자자별 거래 데이터를 별도 조회해야 합니다."
+        )
+    }
+
+
+# ─────────────────────────────────────────────
+# 도구 6: KRX ETF 투자자별 순매수 조회
+# ─────────────────────────────────────────────
+@mcp.tool()
+async def get_krx_etf_investor(
+    etf_code: str,
+    date: str = None
+) -> dict:
+    """
+    KRX 정보데이터시스템 API로 ETF 투자자별 순매수를 조회합니다.
+    etf_code: ETF 종목코드 6자리 (예: "069500" = KODEX 200)
+    date: 조회일자 (형식: "20240601", 미입력 시 가장 최근 영업일)
+    """
+    import datetime
+
+    if not date:
+        today = datetime.date.today()
+        date = today.strftime("%Y%m%d")
+
+    headers = {"AUTH_KEY": KRX_API_KEY}
+    params = {"basDd": date}
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            "http://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_invstrgnt_trd",
+            headers=headers,
+            params=params
+        )
+        data = response.json()
+
+    items = data.get("OutBlock_1", [])
+    result = [item for item in items if item.get("ISU_CD", "").startswith(etf_code)]
+
+    if not result:
+        return {
+            "message": f"종목코드 {etf_code}의 투자자 데이터를 찾을 수 없습니다.",
+            "ANALYSIS_GUIDE": "KRX 데이터는 전일 기준이며 익일 오전 8시에 업데이트됩니다."
+        }
+
+    return {
+        "etf_code": etf_code,
+        "date": date,
+        "investor_data": result,
+        "ANALYSIS_GUIDE": (
+            "⚠️ 투자자별 순매수는 전일 기준입니다. "
+            "개인(INVST_TP_NM='개인'), 외국인, 기관 등 투자자 유형별 "
+            "순매수금액(NETBUY_TRDVAL)과 순매수수량(NETBUY_TRDVOL)을 확인할 수 있습니다. "
+            "순매수 양수=매수우위, 음수=매도우위입니다."
+        )
+    }
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
