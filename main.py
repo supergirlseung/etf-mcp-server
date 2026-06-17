@@ -352,6 +352,52 @@ async def get_krx_etf_investor(
         )
     }
 
+
+# ─────────────────────────────────────────────
+# 도구 7: ETF 마스터 - 종목명으로 티커 검색
+# ─────────────────────────────────────────────
+import pandas as pd
+
+ETF_MASTER = None
+
+def load_etf_master():
+    global ETF_MASTER
+    if ETF_MASTER is None:
+        try:
+            ETF_MASTER = pd.read_excel("etf_master_20260616.xlsx", dtype=str)
+        except Exception as e:
+            ETF_MASTER = pd.DataFrame()
+    return ETF_MASTER
+
+@mcp.tool()
+def search_etf_master(query: str) -> dict:
+    """
+    ETF 마스터 파일에서 종목명, 운용사, 기초자산 등으로 ETF를 검색합니다.
+    query: 검색어 (예: "우주항공", "삼성자산운용", "반도체", "069500")
+    """
+    df = load_etf_master()
+    if df.empty:
+        return {"error": "ETF 마스터 파일을 불러올 수 없습니다."}
+
+    mask = df.apply(lambda row: row.astype(str).str.contains(query, case=False, na=False).any(), axis=1)
+    result = df[mask].to_dict(orient="records")
+
+    if not result:
+        return {
+            "message": f"'{query}'에 해당하는 ETF를 찾을 수 없습니다.",
+            "tip": "종목명, 운용사명, 티커코드, 기초자산 등으로 검색해보세요."
+        }
+
+    return {
+        "query": query,
+        "count": len(result),
+        "etf_list": result,
+        "ANALYSIS_GUIDE": (
+            "티커(ticker)를 확인한 후 get_krx_etf_price 도구에 전달하면 "
+            "실제 시세 데이터를 조회할 수 있습니다."
+        )
+    }
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
