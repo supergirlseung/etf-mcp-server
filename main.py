@@ -271,9 +271,10 @@ async def get_krx_etf_price(
 
     async with httpx.AsyncClient() as client:
         response = await client.get(
-            "http://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd",
+            "https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd.json",
             headers=headers,
-            params=params
+            params=params,
+            follow_redirects=True
         )
         data = response.json()
 
@@ -324,7 +325,7 @@ async def get_krx_etf_investor(
 
     async with httpx.AsyncClient() as client:
         response = await client.get(
-            "http://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_invstrgnt_trd",
+            "https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_invstrgnt_trd.json",
             headers=headers,
             params=params
         )
