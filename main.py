@@ -427,7 +427,7 @@ def load_channel_master():
     if CHANNEL_MASTER is None:
         try:
             CHANNEL_MASTER = pd.read_excel(
-                "youtube_channels_final.xlsx",
+                "youtube channels master final.xlsx",
                 sheet_name="채널 분류표",
                 dtype=str
             )
