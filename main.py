@@ -416,6 +416,165 @@ def search_etf_master(query: str) -> dict:
         )
     }
 
+
+# ─────────────────────────────────────────────
+# 도구 8: 모니터링 채널 목록 조회
+# ─────────────────────────────────────────────
+CHANNEL_MASTER = None
+
+def load_channel_master():
+    global CHANNEL_MASTER
+    if CHANNEL_MASTER is None:
+        try:
+            CHANNEL_MASTER = pd.read_excel(
+                "youtube_channels_final.xlsx",
+                sheet_name="채널 분류표",
+                dtype=str
+            )
+        except Exception as e:
+            CHANNEL_MASTER = pd.DataFrame()
+    return CHANNEL_MASTER
+
+@mcp.tool()
+def get_monitored_channels(
+    tier: str = None,
+    channel_type: str = None
+) -> dict:
+    """
+    모니터링 대상 유튜브 채널 목록을 조회합니다.
+    tier: 채널 체급 필터 - "Mega"(100만+), "Macro"(10만~), "Micro"(~10만), 미입력 시 전체
+    channel_type: 유형 필터 - "ETF 전문", "리서치/종목분석형", "배당/월배당 특화",
+                  "연금/절세 특화", "재테크 입문/동기부여", "거시경제/시황",
+                  "라이프스타일+투자", 미입력 시 전체
+    """
+    df = load_channel_master()
+    if df.empty:
+        return {"error": "채널 마스터 파일을 불러올 수 없습니다."}
+
+    if tier:
+        df = df[df["Tier"].str.contains(tier, case=False, na=False)]
+
+    if channel_type:
+        df = df[df["채널 유형 태그"].str.contains(channel_type, case=False, na=False)]
+
+    result = df[["채널명", "YouTube 주소", "구독자(약)", "Tier", "주요 주제", "채널 유형 태그"]].to_dict(orient="records")
+
+    return {
+        "tier_filter": tier or "전체",
+        "type_filter": channel_type or "전체",
+        "count": len(result),
+        "channels": result,
+        "ANALYSIS_GUIDE": (
+            "이 채널 목록은 자체 모니터링 대상 채널입니다. "
+            "채널명을 search_youtube_etf 도구의 검색어에 활용하거나, "
+            "특정 채널의 ETF 언급 콘텐츠를 조회할 때 참고하세요."
+        )
+    }
+
+
+# ─────────────────────────────────────────────
+# 도구 9: 특정 채널의 ETF 언급 영상 검색
+# ─────────────────────────────────────────────
+@mcp.tool()
+async def search_youtube_by_channel(
+    etf_name: str,
+    channel_name: str = None,
+    tier: str = None,
+    max_results: int = 5,
+    published_after: str = None
+) -> dict:
+    """
+    모니터링 채널 내에서 특정 ETF 언급 영상을 검색합니다.
+    etf_name: 검색할 ETF명 (예: "KODEX 반도체")
+    channel_name: 특정 채널명 (예: "수페TV"), 미입력 시 전체 모니터링 채널 대상
+    tier: 채널 체급 필터 - "Mega", "Macro", "Micro"
+    max_results: 채널당 최대 결과 수 (기본 5)
+    published_after: 특정 날짜 이후 영상만 (예: "2024-01-01T00:00:00Z")
+    """
+    df = load_channel_master()
+    if df.empty:
+        return {"error": "채널 마스터 파일을 불러올 수 없습니다."}
+
+    if channel_name:
+        df = df[df["채널명"].str.contains(channel_name, case=False, na=False)]
+    if tier:
+        df = df[df["Tier"].str.contains(tier, case=False, na=False)]
+
+    if df.empty:
+        return {"error": "조건에 맞는 채널이 없습니다."}
+
+    all_results = []
+    searched_channels = []
+
+    for _, row in df.iterrows():
+        ch_name = row.get("채널명", "")
+        query = f"{etf_name} {ch_name}"
+
+        params = {
+            "part": "snippet",
+            "q": query,
+            "type": "video",
+            "maxResults": max_results,
+            "order": "date",
+            "regionCode": "KR",
+            "relevanceLanguage": "ko",
+            "key": YOUTUBE_API_KEY
+        }
+        if published_after:
+            params["publishedAfter"] = published_after
+
+        try:
+            async with httpx.AsyncClient() as client:
+                search_resp = await client.get(
+                    "https://www.googleapis.com/youtube/v3/search",
+                    params=params
+                )
+                search_data = search_resp.json()
+
+            video_ids = [item["id"]["videoId"] for item in search_data.get("items", []) if "videoId" in item.get("id", {})]
+
+            if video_ids:
+                async with httpx.AsyncClient() as client:
+                    stats_resp = await client.get(
+                        "https://www.googleapis.com/youtube/v3/videos",
+                        params={
+                            "part": "statistics,snippet",
+                            "id": ",".join(video_ids),
+                            "key": YOUTUBE_API_KEY
+                        }
+                    )
+                    stats_data = stats_resp.json()
+
+                for item in stats_data.get("items", []):
+                    all_results.append({
+                        "channel": ch_name,
+                        "tier": row.get("Tier", ""),
+                        "title": item["snippet"]["title"],
+                        "published_at": item["snippet"]["publishedAt"],
+                        "view_count": int(item["statistics"].get("viewCount", 0)),
+                        "url": f"https://www.youtube.com/watch?v={item['id']}"
+                    })
+
+            searched_channels.append(ch_name)
+
+        except Exception:
+            continue
+
+    all_results.sort(key=lambda x: x["view_count"], reverse=True)
+
+    return {
+        "etf_name": etf_name,
+        "searched_channels": searched_channels,
+        "total_found": len(all_results),
+        "videos": all_results,
+        "ANALYSIS_GUIDE": (
+            "⚠️ 유튜브 API 쿼터(하루 100회)를 채널 수만큼 소모합니다. "
+            "채널을 특정하거나 Tier 필터를 사용해 쿼터를 아껴 쓰세요. "
+            "검색 결과는 채널명+ETF명 조합이므로 실제 언급 여부는 영상에서 확인 필요합니다."
+        )
+    }
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
