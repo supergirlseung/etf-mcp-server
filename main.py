@@ -65,23 +65,39 @@ async def search_naver_trend(
 
 
 # ─────────────────────────────────────────────
-# 도구 2: KODEX vs TIGER 트렌드 비교
+# 도구 2: ETF 브랜드 간 트렌드 비교 (전 브랜드 지원)
 # ─────────────────────────────────────────────
 @mcp.tool()
 async def compare_etf_brands(
     theme: str,
-    start_date: str,
-    end_date: str
+    brands: list[str] = None,
+    start_date: str = None,
+    end_date: str = None
 ) -> dict:
     """
-    KODEX와 TIGER의 동일 테마 ETF 검색 트렌드를 비교합니다.
-    theme: ETF 테마 (예: "반도체", "2차전지", "AI")
-    start_date: 시작일 (예: "2024-01-01")
-    end_date: 종료일 (예: "2024-12-31")
+    두 개 이상의 ETF 브랜드 간 네이버 검색 트렌드를 비교합니다.
+    theme: ETF 테마 (예: "반도체", "2차전지", "AI", "미국S&P500")
+    brands: 비교할 브랜드 리스트 (예: ["KODEX", "TIGER", "ACE"], 미입력 시 KODEX vs TIGER)
+            지원 브랜드: KODEX, TIGER, RISE, ACE, PLUS, SOL, KIWOOM, HANARO, 1Q, KoAct, TIME, WON 등
+    start_date: 시작일 (예: "2024-01-01", 미입력 시 3개월 전)
+    end_date: 종료일 (예: "2024-12-31", 미입력 시 오늘)
     """
+    import datetime
+
+    if not brands:
+        brands = ["KODEX", "TIGER"]
+
+    if len(brands) > 5:
+        return {"error": "네이버 API 제한으로 한 번에 최대 5개 브랜드만 비교 가능합니다."}
+
+    if not end_date:
+        end_date = datetime.date.today().strftime("%Y-%m-%d")
+    if not start_date:
+        start_date = (datetime.date.today() - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
+
     keyword_groups = [
-        {"groupName": f"KODEX {theme}", "keywords": [f"KODEX {theme}"]},
-        {"groupName": f"TIGER {theme}", "keywords": [f"TIGER {theme}"]}
+        {"groupName": f"{brand} {theme}", "keywords": [f"{brand} {theme}"]}
+        for brand in brands
     ]
 
     body = {
@@ -107,13 +123,15 @@ async def compare_etf_brands(
 
     return {
         "theme": theme,
+        "brands": brands,
+        "period": f"{start_date} ~ {end_date}",
         "comparison": data,
         "ANALYSIS_GUIDE": (
-            f"⚠️ KODEX {theme}와 TIGER {theme}의 상대적 검색 트렌드 비교입니다. "
-            "수치는 두 키워드 중 최대값=100 기준 상대값입니다. "
+            f"⚠️ {', '.join(brands)} 브랜드의 '{theme}' 테마 검색 트렌드 비교입니다. "
+            "수치는 비교 그룹 중 최대값=100 기준 상대값입니다. "
+            "한 번에 최대 5개 브랜드까지 비교 가능합니다. "
             "'A가 B보다 인기 있다'가 아니라 "
-            "'A의 검색 관심도가 B보다 높게 나타났다'고 표현하세요. "
-            "절대적 우열 판단이 아닌 상대적 트렌드 비교임을 명시하세요."
+            "'A의 검색 관심도가 B보다 높게 나타났다'고 표현하세요."
         )
     }
 
